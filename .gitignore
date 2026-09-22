@@ -1,0 +1,6 @@
+.env
+.env.*
+*.pem
+.idea/
+node_modules/
+target/
