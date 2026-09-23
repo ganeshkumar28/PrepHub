@@ -91,6 +91,24 @@ public class ExperienceService {
     }
 
     @Transactional(readOnly = true)
+    public ExperiencePageDto listMyExperiences(int page, int size, Jwt jwt) {
+        UUID userId = UUID.fromString(jwt.getSubject());
+        Page<Experience> expPage = experienceRepository.findByAuthorIdOrderByCreatedAtDesc(
+            userId, org.springframework.data.domain.PageRequest.of(page, size)
+        );
+        List<ExperienceDto> content = toDtos(expPage.getContent());
+
+        PageMetaDto pageMeta = new PageMetaDto(
+            expPage.getNumber(),
+            expPage.getSize(),
+            expPage.getTotalElements(),
+            expPage.getTotalPages()
+        );
+
+        return new ExperiencePageDto(content, pageMeta);
+    }
+
+    @Transactional(readOnly = true)
     public ExperienceDto getExperience(UUID experienceId) {
         Experience experience = experienceRepository.findById(experienceId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Experience not found"));

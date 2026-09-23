@@ -5,7 +5,7 @@ import jakarta.validation.constraints.Size;
 
 public record CreateExtractionRequest(
     @NotBlank
-    @Size(min = 100, max = 10000)
+    @Size(min = 100, max = 50000)
     String rawText
 ) {}
 

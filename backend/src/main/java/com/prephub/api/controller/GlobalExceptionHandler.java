@@ -56,11 +56,15 @@ public class GlobalExceptionHandler {
             fieldErrors.add(new FieldErrorDto(error.getField(), error.getDefaultMessage()));
         }
 
+        String detail = fieldErrors.isEmpty()
+            ? "Validation failed for request parameters or body"
+            : fieldErrors.stream().map(f -> f.field() + ": " + f.message()).collect(java.util.stream.Collectors.joining("; "));
+
         ProblemDto problem = new ProblemDto(
             URI.create("about:blank"),
             "Bad Request",
             HttpStatus.BAD_REQUEST.value(),
-            "Validation failed for request parameters or body",
+            detail,
             null,
             fieldErrors
         );
@@ -158,11 +162,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ProblemDto> handleHttpMessageNotReadableException(HttpMessageNotReadableException ex) {
+        String detail = ex.getMostSpecificCause() != null ? ex.getMostSpecificCause().getMessage() : "Malformed request body or invalid format";
         ProblemDto problem = new ProblemDto(
             URI.create("about:blank"),
             "Bad Request",
             HttpStatus.BAD_REQUEST.value(),
-            "Malformed request body or invalid format",
+            detail,
             null,
             null
         );

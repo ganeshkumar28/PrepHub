@@ -14,5 +14,7 @@ public interface ExperienceRepository extends JpaRepository<Experience, UUID>, J
     Optional<Experience> findByIdAndAuthorId(UUID id, UUID authorId);
 
     Optional<Experience> findByExtractionJobId(UUID extractionJobId);
+
+    org.springframework.data.domain.Page<Experience> findByAuthorIdOrderByCreatedAtDesc(UUID authorId, org.springframework.data.domain.Pageable pageable);
 }
 

@@ -17,14 +17,32 @@ import org.springframework.security.web.access.AccessDeniedHandler;
 
 import java.net.URI;
 
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
     private final ObjectMapper objectMapper;
 
+    @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}")
+    private String jwkSetUri;
+
     public SecurityConfig(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
+    }
+
+    @Bean
+    public JwtDecoder jwtDecoder() {
+        return NimbusJwtDecoder.withJwkSetUri(jwkSetUri)
+            .jwsAlgorithms(algorithms -> {
+                algorithms.add(SignatureAlgorithm.ES256);
+                algorithms.add(SignatureAlgorithm.RS256);
+            })
+            .build();
     }
 
     @Bean
