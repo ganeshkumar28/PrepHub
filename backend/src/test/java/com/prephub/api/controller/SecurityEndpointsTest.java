@@ -111,5 +111,41 @@ class SecurityEndpointsTest {
             .andExpect(jsonPath("$.id").value(userId.toString()))
             .andExpect(jsonPath("$.displayName").value("Test Engineer"));
     }
+
+    @Test
+    @DisplayName("POST /api/v1/extractions returns 401 without Authorization header")
+    void postExtraction_withoutAuth_returnsUnauthorized() throws Exception {
+        String validRawText = "This is a detailed interview experience containing more than one hundred characters of text describing rounds, questions, and other relevant information.";
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/extractions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"rawText\": \"" + validRawText + "\"}"))
+            .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/extractions returns 202 with valid JWT and job status")
+    void postExtraction_withValidJwt_returnsAccepted() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        when(extractionService.createExtraction(any(), any())).thenReturn(
+            new com.prephub.api.dto.ExtractionJobDto(
+                jobId,
+                com.prephub.api.entity.JobStatus.SUCCEEDED,
+                null,
+                null,
+                java.time.Instant.now(),
+                java.time.Instant.now()
+            )
+        );
+
+        String validRawText = "This is a detailed interview experience containing more than one hundred characters of text describing rounds, questions, and other relevant information.";
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/extractions")
+                .with(jwt().jwt(builder -> builder.subject(userId.toString())))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"rawText\": \"" + validRawText + "\"}"))
+            .andExpect(status().isAccepted())
+            .andExpect(jsonPath("$.id").value(jobId.toString()))
+            .andExpect(jsonPath("$.status").value("SUCCEEDED"));
+    }
 }
 

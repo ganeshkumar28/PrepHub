@@ -38,18 +38,50 @@ public class CompanyService {
 
     @Transactional
     public Company getOrCreateCompanyByName(String companyName) {
+        return matchOrCreateCompany(companyName);
+    }
+
+    @Transactional
+    public Company matchOrCreateCompany(String companyName) {
         if (companyName == null || companyName.isBlank()) {
             return null;
         }
         String trimmed = companyName.trim();
-        return companyRepository.findByNameIgnoreCase(trimmed).orElseGet(() -> {
-            String slug = trimmed.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("^-|-$", "");
-            if (slug.isBlank()) {
-                slug = "company-" + System.currentTimeMillis();
+        // 1. Exact case-insensitive match
+        Optional<Company> exactMatch = companyRepository.findByNameIgnoreCase(trimmed);
+        if (exactMatch.isPresent()) {
+            return exactMatch.get();
+        }
+
+        // 2. Trigram similarity match (> 0.4)
+        try {
+            Optional<Company> similarMatch = companyRepository.findMostSimilarByName(trimmed);
+            if (similarMatch.isPresent()) {
+                return similarMatch.get();
             }
-            Company company = new Company(trimmed, slug, new ArrayList<>());
-            return companyRepository.save(company);
-        });
+        } catch (Exception ignored) {
+            // Fallback for non-Postgres environments or environments without pg_trgm
+        }
+
+        // 3. Create new company
+        String slug = generateSlug(trimmed);
+        Company company = new Company(trimmed, slug, new ArrayList<>());
+        return companyRepository.save(company);
+    }
+
+    private String generateSlug(String name) {
+        String baseSlug = name.toLowerCase(Locale.ROOT)
+            .replaceAll("[^a-z0-9]+", "-")
+            .replaceAll("^-|-$", "");
+        if (baseSlug.isBlank()) {
+            baseSlug = "company-" + System.currentTimeMillis();
+        }
+        String slug = baseSlug;
+        int counter = 1;
+        while (companyRepository.findBySlug(slug).isPresent()) {
+            slug = baseSlug + "-" + counter++;
+        }
+        return slug;
     }
 }
 
