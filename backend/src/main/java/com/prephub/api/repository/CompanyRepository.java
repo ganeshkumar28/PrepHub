@@ -17,6 +17,9 @@ public interface CompanyRepository extends JpaRepository<Company, UUID> {
 
     Optional<Company> findByNameIgnoreCase(String name);
 
+    @Query(value = "SELECT * FROM companies WHERE similarity(name, :query) > 0.2 ORDER BY similarity(name, :query) DESC LIMIT 10", nativeQuery = true)
+    List<Company> searchByTrigramSimilarity(@Param("query") String query);
+
     @Query(value = "SELECT * FROM companies WHERE name ILIKE CONCAT('%', :query, '%') OR :query = ANY(aliases) ORDER BY name ASC LIMIT 20", nativeQuery = true)
     List<Company> searchByNameOrAlias(@Param("query") String query);
 

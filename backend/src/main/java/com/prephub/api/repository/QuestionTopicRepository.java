@@ -17,5 +17,7 @@ public interface QuestionTopicRepository extends JpaRepository<QuestionTopic, Qu
     List<QuestionTopic> findByQuestionIdIn(Collection<UUID> questionIds);
 
     void deleteByQuestionId(UUID questionId);
+
+    void deleteByQuestionIdIn(Collection<UUID> questionIds);
 }
 

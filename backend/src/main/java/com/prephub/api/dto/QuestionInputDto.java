@@ -1,5 +1,6 @@
 package com.prephub.api.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.prephub.api.entity.Difficulty;
 import com.prephub.api.entity.QuestionType;
 import jakarta.validation.constraints.NotBlank;
@@ -20,6 +21,7 @@ public record QuestionInputDto(
 
     Difficulty difficulty,
 
+    @NotNull
     @Size(max = 5)
     List<String> topicSlugs
 ) {}

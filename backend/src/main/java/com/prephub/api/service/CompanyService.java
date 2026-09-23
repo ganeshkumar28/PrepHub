@@ -25,8 +25,18 @@ public class CompanyService {
         if (query == null || query.isBlank()) {
             return List.of();
         }
-        return companyRepository.searchByNameOrAlias(query.trim())
-            .stream()
+        String trimmed = query.trim();
+        List<Company> results;
+        try {
+            results = companyRepository.searchByTrigramSimilarity(trimmed);
+        } catch (Exception e) {
+            // Fallback for non-Postgres / test environments without pg_trgm
+            results = companyRepository.searchByNameOrAlias(trimmed);
+            if (results.size() > 10) {
+                results = results.subList(0, 10);
+            }
+        }
+        return results.stream()
             .map(c -> new CompanyDto(c.getSlug(), c.getName()))
             .toList();
     }
@@ -84,4 +94,3 @@ public class CompanyService {
         return slug;
     }
 }
-

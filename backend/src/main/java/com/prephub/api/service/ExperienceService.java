@@ -15,6 +15,7 @@ import com.prephub.api.entity.Company;
 import com.prephub.api.entity.Experience;
 import com.prephub.api.entity.ExtractionJob;
 import com.prephub.api.entity.InterviewRound;
+import com.prephub.api.entity.JobStatus;
 import com.prephub.api.entity.Level;
 import com.prephub.api.entity.Outcome;
 import com.prephub.api.entity.Profile;
@@ -26,11 +27,7 @@ import com.prephub.api.repository.ExtractionJobRepository;
 import com.prephub.api.repository.InterviewRoundRepository;
 import com.prephub.api.repository.QuestionRepository;
 import com.prephub.api.repository.QuestionTopicRepository;
-import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
@@ -38,8 +35,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -79,41 +74,11 @@ public class ExperienceService {
     public ExperiencePageDto listExperiences(int page, int size, String q, String companySlug,
                                             List<String> topicSlugs, Level level, Outcome outcome,
                                             Integer year, String sort) {
-        Sort sortOrder = "oldest".equalsIgnoreCase(sort)
-            ? Sort.by(Sort.Direction.ASC, "createdAt")
-            : Sort.by(Sort.Direction.DESC, "createdAt");
+        Page<Experience> expPage = experienceRepository.searchExperiences(
+            page, size, q, companySlug, topicSlugs, level, outcome, year, sort
+        );
 
-        Specification<Experience> spec = (root, query, cb) -> {
-            List<Predicate> predicates = new ArrayList<>();
-            predicates.add(cb.equal(root.get("status"), "PUBLISHED"));
-
-            if (companySlug != null && !companySlug.isBlank()) {
-                predicates.add(cb.equal(root.get("company").get("slug"), companySlug));
-            }
-            if (level != null) {
-                predicates.add(cb.equal(root.get("level"), level));
-            }
-            if (outcome != null) {
-                predicates.add(cb.equal(root.get("outcome"), outcome));
-            }
-            if (year != null) {
-                predicates.add(cb.equal(root.get("interviewYear"), year));
-            }
-            if (q != null && !q.isBlank()) {
-                String pattern = "%" + q.trim().toLowerCase() + "%";
-                Predicate searchRole = cb.like(cb.lower(root.get("roleTitle")), pattern);
-                Predicate searchSummary = cb.like(cb.lower(root.get("summary")), pattern);
-                predicates.add(cb.or(searchRole, searchSummary));
-            }
-
-            return cb.and(predicates.toArray(new Predicate[0]));
-        };
-
-        Page<Experience> expPage = experienceRepository.findAll(spec, PageRequest.of(page, size, sortOrder));
-
-        List<ExperienceDto> content = expPage.getContent().stream()
-            .map(this::toDto)
-            .toList();
+        List<ExperienceDto> content = toDtos(expPage.getContent());
 
         PageMetaDto pageMeta = new PageMetaDto(
             expPage.getNumber(),
@@ -140,7 +105,11 @@ public class ExperienceService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Extraction job not found"));
 
         if (!job.getUser().getId().equals(userId)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Extraction job not found");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Extraction job does not belong to the calling user");
+        }
+
+        if (job.getStatus() != JobStatus.SUCCEEDED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Extraction job is not completed");
         }
 
         if (experienceRepository.findByExtractionJobId(jobId).isPresent()) {
@@ -169,7 +138,7 @@ public class ExperienceService {
         Experience experience = experienceRepository.findById(experienceId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Experience not found"));
 
-        if (!experience.getAuthor().getId().equals(userId)) {
+        if (experience.getAuthor() == null || !experience.getAuthor().getId().equals(userId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not allowed to edit this experience");
         }
 
@@ -180,8 +149,15 @@ public class ExperienceService {
 
         Experience saved = experienceRepository.save(experience);
 
-        // Replace rounds and questions
+        // Wholesale replacement of rounds and questions
+        List<Question> existingQuestions = questionRepository.findByExperienceId(saved.getId());
+        if (!existingQuestions.isEmpty()) {
+            List<UUID> qIds = existingQuestions.stream().map(Question::getId).toList();
+            questionTopicRepository.deleteByQuestionIdIn(qIds);
+            questionRepository.deleteByExperienceId(saved.getId());
+        }
         interviewRoundRepository.deleteByExperienceId(saved.getId());
+
         saveRoundsAndQuestions(saved, input.rounds());
 
         return toDto(saved);
@@ -193,10 +169,17 @@ public class ExperienceService {
         Experience experience = experienceRepository.findById(experienceId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Experience not found"));
 
-        if (!experience.getAuthor().getId().equals(userId)) {
+        if (experience.getAuthor() == null || !experience.getAuthor().getId().equals(userId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not allowed to delete this experience");
         }
 
+        List<Question> existingQuestions = questionRepository.findByExperienceId(experience.getId());
+        if (!existingQuestions.isEmpty()) {
+            List<UUID> qIds = existingQuestions.stream().map(Question::getId).toList();
+            questionTopicRepository.deleteByQuestionIdIn(qIds);
+            questionRepository.deleteByExperienceId(experience.getId());
+        }
+        interviewRoundRepository.deleteByExperienceId(experience.getId());
         experienceRepository.delete(experience);
     }
 
@@ -253,22 +236,21 @@ public class ExperienceService {
     }
 
     public ExperienceDto toDto(Experience exp) {
-        UserDto authorDto = null;
-        if (!Boolean.TRUE.equals(exp.getIsAnonymous()) && exp.getAuthor() != null) {
-            authorDto = new UserDto(exp.getAuthor().getId(), exp.getAuthor().getDisplayName());
+        return toDtos(List.of(exp)).get(0);
+    }
+
+    public List<ExperienceDto> toDtos(List<Experience> experiences) {
+        if (experiences.isEmpty()) {
+            return List.of();
         }
 
-        final CompanyDto companyDto = exp.getCompany() != null
-            ? new CompanyDto(exp.getCompany().getSlug(), exp.getCompany().getName())
-            : null;
+        List<UUID> expIds = experiences.stream().map(Experience::getId).toList();
+        List<InterviewRound> allRounds = interviewRoundRepository.findByExperienceIdInOrderByRoundNumberAsc(expIds);
+        List<Question> allQuestions = questionRepository.findByExperienceIdIn(expIds);
+        List<UUID> qIds = allQuestions.stream().map(Question::getId).toList();
+        List<QuestionTopic> allQuestionTopics = qIds.isEmpty() ? List.of() : questionTopicRepository.findByQuestionIdIn(qIds);
 
-        List<InterviewRound> rounds = interviewRoundRepository.findByExperienceIdOrderByRoundNumberAsc(exp.getId());
-        List<Question> questions = questionRepository.findByExperienceId(exp.getId());
-        List<QuestionTopic> questionTopics = questions.isEmpty()
-            ? Collections.emptyList()
-            : questionTopicRepository.findByQuestionIdIn(questions.stream().map(Question::getId).toList());
-
-        Map<UUID, List<TopicDto>> topicsByQuestion = questionTopics.stream()
+        Map<UUID, List<TopicDto>> topicsByQuestion = allQuestionTopics.stream()
             .collect(Collectors.groupingBy(
                 qt -> qt.getQuestion().getId(),
                 Collectors.mapping(
@@ -277,47 +259,62 @@ public class ExperienceService {
                 )
             ));
 
-        List<RoundDto> roundDtos = rounds.stream()
-            .map(r -> {
-                List<QuestionDto> roundQuestions = questions.stream()
-                    .filter(q -> q.getRound() != null && q.getRound().getId().equals(r.getId()))
-                    .map(q -> new QuestionDto(
-                        q.getId(),
-                        exp.getId(),
-                        q.getText(),
-                        q.getQuestionType(),
-                        q.getDifficulty(),
-                        topicsByQuestion.getOrDefault(q.getId(), List.of()),
-                        companyDto
-                    ))
-                    .toList();
+        Map<UUID, List<InterviewRound>> roundsByExp = allRounds.stream()
+            .collect(Collectors.groupingBy(r -> r.getExperience().getId()));
+
+        Map<UUID, List<Question>> questionsByRound = allQuestions.stream()
+            .filter(q -> q.getRound() != null)
+            .collect(Collectors.groupingBy(q -> q.getRound().getId()));
+
+        return experiences.stream().map(exp -> {
+            UserDto authorDto = null;
+            if (!Boolean.TRUE.equals(exp.getIsAnonymous()) && exp.getAuthor() != null) {
+                authorDto = new UserDto(exp.getAuthor().getId(), exp.getAuthor().getDisplayName());
+            }
+
+            final CompanyDto companyDto = exp.getCompany() != null
+                ? new CompanyDto(exp.getCompany().getSlug(), exp.getCompany().getName())
+                : null;
+
+            List<InterviewRound> rounds = roundsByExp.getOrDefault(exp.getId(), List.of());
+            List<RoundDto> roundDtos = rounds.stream().map(r -> {
+                List<Question> roundQuestions = questionsByRound.getOrDefault(r.getId(), List.of());
+                List<QuestionDto> qDtos = roundQuestions.stream().map(q -> new QuestionDto(
+                    q.getId(),
+                    exp.getId(),
+                    q.getText(),
+                    q.getQuestionType(),
+                    q.getDifficulty(),
+                    topicsByQuestion.getOrDefault(q.getId(), List.of()),
+                    companyDto
+                )).toList();
 
                 return new RoundDto(
                     r.getRoundNumber(),
                     r.getRoundType(),
                     r.getDurationMinutes(),
                     r.getNotes(),
-                    roundQuestions
+                    qDtos
                 );
-            })
-            .toList();
+            }).toList();
 
-        return new ExperienceDto(
-            exp.getId(),
-            authorDto,
-            exp.getIsAnonymous(),
-            companyDto,
-            exp.getRoleTitle(),
-            exp.getLevel(),
-            exp.getYearsOfExperience(),
-            exp.getLocation(),
-            exp.getInterviewYear(),
-            exp.getInterviewMonth(),
-            exp.getInterviewMode(),
-            exp.getOutcome(),
-            exp.getSummary(),
-            roundDtos,
-            exp.getCreatedAt()
-        );
+            return new ExperienceDto(
+                exp.getId(),
+                authorDto,
+                exp.getIsAnonymous(),
+                companyDto,
+                exp.getRoleTitle(),
+                exp.getLevel(),
+                exp.getYearsOfExperience(),
+                exp.getLocation(),
+                exp.getInterviewYear(),
+                exp.getInterviewMonth(),
+                exp.getInterviewMode(),
+                exp.getOutcome(),
+                exp.getSummary(),
+                roundDtos,
+                exp.getCreatedAt()
+            );
+        }).toList();
     }
 }

@@ -1,5 +1,6 @@
 package com.prephub.api.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.prephub.api.entity.RoundType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
@@ -24,6 +25,7 @@ public record RoundInputDto(
     @Size(max = 1000)
     String notes,
 
+    @NotNull
     @Valid
     @Size(max = 50)
     List<QuestionInputDto> questions
